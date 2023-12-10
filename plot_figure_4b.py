@@ -73,7 +73,7 @@ def run():
     old_Npfixs033 = np.array(old_Npfixs033)
     
     #plot simulation and theory
-    plt.figure(figsize=(14,12)); plt.xlabel(r"$U_{b}^{1}/U_{0}$",fontsize=65); plt.ylabel(r"$ \tilde{p}_{fix}(\mu \to \mu +\delta \mu)$",fontsize=65); plt.yscale('log'); 
+    plt.figure(figsize=(14,12)); plt.xlabel(r"$U_{1}/U_{0}$",fontsize=65); plt.ylabel(r"$ \tilde{p}_{fix}(\mu \to \mu +\delta \mu)$",fontsize=65); plt.yscale('log'); 
     plt.plot(Ubms1/Ub,Npfixs1,color='cornflowerblue',linewidth=10)
     plt.plot(Ubms033/Ub,Npfixs033,color='blue',linewidth=10)
     plt.plot(Ubms1s/Ub,Npfixs1s,'--',color='cornflowerblue',linewidth=10)
@@ -82,13 +82,13 @@ def run():
     #plt.plot(Ubms033/Ub,new_Npfixs033,'k:')
     plt.axhline(y=1,color='black',linewidth=1)
     
-    plt.scatter(S085['6'][0:-4]/Ub,S085['9'][0:-4],color='cornflowerblue',s=700,marker='s',label=r"$s'=s_{b}$")
-    plt.scatter(S03['6'][0:-2]/Ub,S03['9'][0:-2],color='blue',s=700,marker='s',label=r"$s'=0.3 \cdot s_{b}$")
+    plt.scatter(S085['6'][0:-4]/Ub,S085['9'][0:-4],color='cornflowerblue',s=700,marker='s',label=r"$\beta=1$")
+    plt.scatter(S03['6'][0:-2]/Ub,S03['9'][0:-2],color='blue',s=700,marker='s',label=r"$\beta=1$")
     plt.xscale('log')
     plt.yscale('log')
     plt.xticks(fontsize=44); plt.yticks(fontsize=44)
     #plt.axhline(y=1,color='black',linewidth=3)
-    #plt.legend(frameon=False,prop={'size': 48})
+    plt.legend(frameon=False,loc='upper left',prop={'size': 48})
     plt.tight_layout();
     #plt.savefig("C:/Users/19084/Downloads/Ferrare_Good_Figure_4b.png",bbox_inches=0,dpi=900)
     plt.savefig("figures/figure_4b.png",bbox_inches='tight',dpi=700)

@@ -81,6 +81,7 @@ def run():
     plt.axhline(y=1,color='black',linewidth=1)
 
     plt.tight_layout()
+    plt.show()
     plt.savefig('figures/figure_2b.png',bbox_inches='tight',dpi=900)
     
 if __name__=='__main__':

@@ -54,6 +54,40 @@ def calculate_xc_twoparam(v,sb,Ub):
     condition = lambda x: constrain_xc_exact(x,v,sb,Ub)
     xc=fsolve(condition,guess_xc)[0]
     return xc
+
+# new version (same thing, slightly different initial guesses, doesn't require N or xc_pop)
+def calculate_both_twoparam(N,sb,Ub):
+
+    # Initial guesses for xc:
+    v=2*sb**2*np.log(N*sb)/np.log(sb/Ub)**2
+    # First one from MM regime
+    guess_xc_mm = v/sb*np.log(sb/Ub)+sb/2
+    # Second one from QS regime
+    guess_xc_qs = np.sqrt(2*v*np.log(v/Ub/sb))
+    #print(guess_xc_mm,guess_xc_qs)
+    # Take larger of the two
+    guess_xc = max([guess_xc_mm,guess_xc_qs])
+    
+    # Solve for xc numerically using starting guess
+    v,xc=fsolve_both(sb,Ub,N,v,guess_xc)
+    return v,xc
+
+#use both constraints to constrain both
+def equations_both(p,s,Ub,N):
+    v,xc=p
+    return [constrain_xc_exact(xc,v,s,Ub),constrain_v(xc,v,N,s)]
+
+#solve for xc and v for general population
+def fsolve_both(s,Ub,N,guess_v,guess_xc):
+    root=fsolve(equations_both,[guess_v,guess_xc],args=(s,Ub,N))
+    return root
+
+#v constrain equation
+def constrain_v(xc,v,N,s):
+    return xc**2/(2*v) - np.log((2*N*xc*(s))/(2*np.pi*v)**0.5)
+
+def constrain_xc_exact(xc,v,s,Ub):
+    return np.log(1)-np.log((Ub/(s))*(np.exp(xc**2/(2*v))*np.exp(-(xc-s)**2/(2*v))*((xc+s)/xc) - np.exp(-(s)**2/(2*v)) + np.exp(xc**2/(2*v))*(np.sqrt(np.pi/(2*v)))*(s**2/xc)*(1+erf((s-xc)/np.sqrt(2*v))))) #correct#
     
 # if you know XCM, calculate the fold change in Ub...
 def calculate_Ub_from_xc(v,sb,xc):
@@ -81,6 +115,124 @@ def Npfix_large_r(s,r,Ub,N,v):
     xc=fsolve_eq_xc_exact(N,s,Ub,v,q_it*s,1)
     xcm=fsolve_eq_xc_exact(N,s,Ub,v,xc,r)
     Npfix=2*N*Ub*r*s*xcm/v
+    return Npfix
+
+# new version (switches between MM and QS internally, rather than externally)--adjusted for when simulation v unavailable
+def calculate_Npfix_twoparam_v_unknown(N,sb,Ub,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=True):
+    
+    # Standardize how we treat dead end modifiers
+    if Um==0 or sm==0:
+        # This is a dead end modifier
+        # set Um=0 and sm=sb (convention)
+        Um=0
+        sm=sb
+        
+    # First make sure we have xc and xcm
+    if xc<-0.5:
+        # Need to calculate xc from scratch. 
+        v,xc = calculate_both_twoparam(N,sb,Ub)
+    
+    if xcm<-0.5:
+        # Need to calculate xcm from scratch
+        # maximum possible xcm (from dead-end modifier section)
+        xcm_max = np.sqrt(2)*xc*(1-(v/(2*xc**2))*np.log(xc*sb/v*xc**2/v))
+        
+        if Um>0:
+            xcm = calculate_xc_twoparam(v,sm,Um)
+            #print("this is xcm ",xcm,xc)
+            #print(sm/sb, xcm, xcm_max)
+            if correct_xcm and xcm>xcm_max:
+            #    #print("Switching xcm!", sm/sb, Um/Ub)
+                # Pretend we're a dead end modifier
+                xcm=xcm_max
+                Um=0
+                sm=sb
+        else:
+        	# We are a dead end modifier
+            xcm = xcm_max
+    if np.abs(xcm-xc)<.00001:
+        xcm=xc
+    
+    # Next gate on whether we are in the MM, QS, (or DE) regimes 
+    if Um==0:
+        # use dead end solution 
+        
+        if xc+deltam>xcm:
+            Npfix=(v/(xc*sb))*(np.exp((xc**2-(xcm-deltam)**2)/(2*v))-1) +2*N*deltam*(gaussian_cdf((deltam-xcm)/np.sqrt(v))-gaussian_cdf(-xc/np.sqrt(v)))
+        else:
+            Npfix=0 
+        
+    elif xcm>sm:
+        # use MM solution
+        
+        base_Npfix = (xcm/xc)*(sm/sb)*np.exp((xc**2-xcm**2)/(2*v))
+        
+        # Next gate on direct cost or benefit
+        if deltam == 0: # No cost or benefit
+            Npfix = base_Npfix
+        
+        elif deltam<0: # Direct cost
+        
+            # define positive version of cost (for convenience)
+            abs_deltam = np.abs(deltam)
+            # switch variables to k and Delta
+            k=np.floor(abs_deltam/sm)
+            D=abs_deltam-k*sm
+            
+            Npfix = base_Npfix*np.exp(-(xcm-sm/2)*abs_deltam/v+D*(sm-D)/(2*v)-gammaln(k+1)+k*np.log(1-sm/xcm))*((1-np.exp(-D*np.minimum(sm,sm-D+xc-xcm)/v))/(sm*D/v)*(1-np.exp(-sm*(sm-D)/v))+((xcm-sm)/xcm)/(k+1)*((1-np.exp(-sm*(sm-D)/v))/(sm*(sm-D)/v))*(1-np.exp(-D*sm/v)))
+        else: # Direct benefit
+            
+            if xc+deltam > xcm:
+                Npfix = base_Npfix*(np.exp(xcm*deltam/v-deltam**2/(2*v))*(1-np.exp(-sm*deltam/v))/(sm*deltam/v))+2*N*deltam*gaussian_cdf((deltam-xcm)/np.sqrt(v))
+                
+            else:
+                # switch variables to k and Delta
+                k=np.floor((xcm-xc-deltam)/sm)
+                
+                D=(xcm-xc-deltam)-k*sm
+                Npfix = base_Npfix * np.exp( xcm*deltam/v-deltam**2/2/v+k*np.log(1-sm/xcm)-k*(k-1)*sm**2/2/v-(k*sm+D)*deltam/v-k*sm*D/v-gammaln(k+1))*(1-np.exp(-(deltam+k*sm)*(sm-D)/v))/((deltam+k*sm)*sm/v)
+                
+                #if k>-0.5:
+                #   print("Using k>=0!", k, sm/sb,deltam/sb,Npfix)
+                
+            
+    else:
+        # use QS solution
+        base_Npfix=2*N*Um*sm*xcm/v # most simplified version
+        #Npfix=((xcm*xcm)/(xc*sb))*np.exp((xc**2-xcm**2)/(2*v)) # less simplified version
+        # is continuous, but not asymptotically correct at large sm/s
+    
+        # Next gate on direct cost or benefit
+        if deltam == 0:
+            Npfix = base_Npfix
+        elif deltam < 0:
+            # define positive version of cost (for convenience)
+            abs_deltam = np.abs(deltam)
+            # switch variables to k and Delta
+            k=np.floor(abs_deltam/sm)
+            D=abs_deltam-k*sm
+        
+            # We do numerical integration of the expression in the SI
+            first_term = lambda x: (Um/sm)**k*(1/factorial(k))*np.exp(-k*sm*D/v-D**2/(2*v)-x*D/v)*0.5*(erf((x+k*sm)/np.sqrt(2*v))+1)*(1/xcm)
+            
+            second_term = lambda x:  (Um/sm)**k*(v/(sm*xcm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*((x+(k+1)*sm)/sm)*gamma(-x/sm-k)/gamma(1-x/sm) 
+            
+            third_term = lambda x: (v/(sm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*(1/factorial(k))*(sm/(x+k*sm))*(1/xcm)*(Ub/sm)**k
+            
+            first_integrand = lambda x: first_term(x)+second_term(x)+third_term(x)
+            
+            second_integrand = lambda x: (Um/sm)**(k+1)*(np.exp(-k*sm*D/v-D**2/(2*v)+(2*k+1)*sm**2/(2*v)))*(1/factorial(k+1))*np.exp(x*(sm-D)/v)*0.5*(erf((x+(k+1)*sm)/np.sqrt(2*v))+1)*(1/xcm)
+            
+            first_integral = integrate.quad(first_integrand,xcm-(k+1)*sm,np.minimum(xcm-k*sm,xc-k*sm-D))[0]
+            
+            second_integral = integrate.quad(second_integrand,xcm-(k+2)*sm,xcm-(k+1)*sm)[0]
+            
+            Npfix = base_Npfix*(first_integral+second_integral)
+            
+        else:
+            print("Not suported yet!")
+            Npfix = -1
+            
     return Npfix
 
 # new version (switches between MM and QS internally, rather than externally)
@@ -474,8 +626,6 @@ def constrain_xc_exact_p_alt(xcm,xc,v,s,Ub,sm,Ubm,N):
     print(a,b,xc,xcm)
     return np.log(b/a)-np.log(xc-xcm)
 
-
-
 def calculate_seff_Ueff_beta(v,xc,s0,U0,b):
 
     # Working out the average
@@ -671,5 +821,7 @@ def calculate_Npfix_beta(N,s0,U0,beta0,s1,U1,beta1,v,deltam=0):
     Npfix = calculate_Npfix_twoparam(N,seff,Ueff,v,smeff,Umeff,deltam=deltam) 
     
     return Npfix
+
+
     
     
