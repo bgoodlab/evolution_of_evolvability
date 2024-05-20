@@ -70,7 +70,7 @@ def run():
     Sr055zero=-Sr055fit[1]/Sr055fit[0]
     Sr05zero=-Sr05fit[1]/Sr05fit[0]
     Sr0zero=-Sr0fit[1]/Sr0fit[0]
-    
+
     sims_rs_2=np.asarray([.9,0.85,0.8,0.75,.7,0.65,0.6])#,0.55,.5])
     zeros_del=np.asarray([Sr09zero,Sr085zero,Sr08zero,Sr075zero,Sr07zero,Sr065zero,Sr06zero])#,Sr055zero,Sr05zero])    
 
@@ -88,7 +88,7 @@ def run():
     Sr40fit=np.polyfit(np.abs(Sr40['9'][0:2]), np.log(Sr40['10'][0:2]), 1)
     Sr50fit=np.polyfit(np.abs(Sr50_c['9'][0:2]), np.log(Sr50_c['10'][0:2]), 1)
     Sr60fit=np.polyfit(np.abs(Sr60['9'][0:2]), np.log(Sr60['10'][0:2]), 1)
-    
+
     #direct costs that make modifier neutral
     Sr12zero=-Sr12fit[1]/Sr12fit[0]
     Sr13zero=-Sr13fit[1]/Sr13fit[0]
@@ -107,7 +107,7 @@ def run():
     #direct costs and benefits that make modifier neutral
     zeros=np.asarray([Sr12zero,Sr13zero,Sr14zero,Sr15zero,Sr17zero,Sr19zero,Sr22zero,Sr25zero,Sr30zero,Sr35zero,Sr40zero,Sr50zero])#,Sr60zero])
     sim_rs=np.asarray([1.2,1.3,1.4,1.5,1.7,1.9,2.2,2.5,3.0,3.5,4.0,5])#,6]
-    
+
     #fixation probability of beneficial mutation
     def Npfix_Beneficial_Mutation(s,sb,N,Ub,v):
             q=sb*np.log(N*sb)/np.log(sb/Ub)
@@ -169,7 +169,7 @@ def run():
         def integrand_extra(x,r,s,sd,v,k):
             return (Ub/sm)**(k+1)*(np.exp(-k*sm*D/v-D**2/(2*v)+(2*k+1)*sm**2/(2*v)))*(1/factorial(k+1))*np.exp(x*(sm-D)/v)*0.5*(erf((x+(k+1)*sm)/np.sqrt(2*v))+1)*(1/xcm)
         val_e=integrate.quad(integrand_extra,xcm-(k+2)*sm,xcm-(k+1)*sm,args=(r,s,sd,v,k))
-        
+
         Npfix=Npfix_nm*(val[0]+val_e[0])
         return np.log(Npfix)
 
@@ -216,13 +216,13 @@ def run():
             guess=r*s+.00000001
             root=fsolve(Npfix_del_constrain_large_r,[guess],args=(s,r,Ub,N,v),epsfcn=.0005)
         return root
-    
+
     #function to solve for direct benefit that makes deleterious modifier neutral
     def solve_for_zero_del(s,r,v,Ub,N):
         guess=(1/r)*s+.00000001
         root=fsolve(Npfix_ben_constrain,[guess],args=(s,r,Ub,N,v))
         return root
-        
+
     #solve for zeros for direct cost
     Srzerostheory=[]
 
@@ -230,7 +230,7 @@ def run():
     for r in rs_vals:
         Srzerostheory.append(solve_for_zero(.01,r,4.957205463377411e-05,.00001,100000000)[0])
     Srzerostheory=np.asarray(Srzerostheory)
-    
+
     #solve for zeros for direct benefit
     Srzerosdel=[]
     theory_rs_2=np.linspace(.6,1,350)
@@ -248,7 +248,7 @@ def run():
             Srzerosdel[i]=scrit
 
     #new
-    
+
     N=1e08
     sb=1e-02
     Ub=1e-05
@@ -263,26 +263,26 @@ def run():
 
         deltam_critical = calculate_critical_cost_twoparam(N,sb,Ub,v,sm,Um)
         critical_costs.append(deltam_critical)
-        
+
         # Calculate the Npfix for direct cost alone
         cost_Npfix = calculate_Npfix_twoparam(N,sb,Ub,v,sb,Ub,deltam=deltam_critical)
         critical_cost_Npfixs.append(cost_Npfix)
-        
+
         # Calculate the Npfix for evolvability part alone
         modifier_Npfix = calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=0,correct_xcm=False)
         critical_modifier_Npfixs.append(modifier_Npfix)
-        
-        
+
+
         print("Critical cost for sm=", rs,deltam_critical,cost_Npfix, modifier_Npfix)
 
     critical_cost_Npfixs = np.array(critical_cost_Npfixs)
     critical_modifier_Npfixs = np.array(critical_modifier_Npfixs)
-    
-    critical_xs = critical_modifier_Npfixs #4/24
-    critical_ys = critical_cost_Npfixs #4/24
-    
+
+    critical_xs = np.log(critical_modifier_Npfixs)
+    critical_ys = np.log(critical_cost_Npfixs)
+
     #simulation
-    Npfixsb=Npfix_Beneficial_Mutation(.01,.01,10**8,.00001,.0000495) #4/24
+    Npfixsb=np.log(Npfix_Beneficial_Mutation(.01,.01,10**8,.00001,.0000495))
     Npfix_modben=Npfix_r(.01,sim_rs,.00001,10**8,.0000495)
     Npfix_moddel=Npfix_r_2(.01,sims_rs_2,.00001,10**8,.0000495)
     Npfix_ben=Npfix_Beneficial_Mutation(zeros_del,.01,10**8,.00001,.0000495)
@@ -299,20 +299,20 @@ def run():
     Npfix_modben_t=np.asarray(Npfix_modben_t)
     Npfix_moddel_t=np.asarray(Npfix_moddel_t)
 
-    
-    xmin = 10**(-7.2)#-2.75*Npfixsb
+
+    xmin = -2.75*Npfixsb
     #xmax = np.log(critical_modifier_Npfixs[-1])
-    xmax = 10**5 #2*Npfixsb
-    ymin = 10**(-20)#-8*Npfixsb
-    ymax = 10**(8)#-xmin
-    
+    xmax = 2*Npfixsb
+    ymin = -8*Npfixsb
+    ymax = -xmin
+
     # GET RID OF THE SCALING ON THE X/Y AXES
     Npfixsb=1
 
     #plot sim
-    plt.scatter(Npfix_modben/Npfixsb,Npfix_del/Npfixsb,color='black',s=300) #4/24
-    plt.scatter(Npfix_moddel/Npfixsb,Npfix_ben/Npfixsb,color='black',s=300) #4/24
-    plt.scatter([1],[1],color='black',s=300)
+    plt.scatter(np.log(Npfix_modben)/Npfixsb,np.log(Npfix_del)/Npfixsb,color='black',s=300)
+    plt.scatter(np.log(Npfix_moddel)/Npfixsb,np.log(Npfix_ben)/Npfixsb,color='black',s=300)
+    plt.scatter([0],[0],color='black')
 
     #plot theory
     # Old version
@@ -323,9 +323,9 @@ def run():
 
 
     #plot features
-    plt.axhline(y=1,color='black',linewidth=5)
-    plt.axvline(x=1,color='black',linewidth=5)
-    plt.plot(np.linspace(xmin,xmax,100), 1/np.linspace(xmin,xmax,100),linestyle='--',color='black',linewidth=4,label="Additive expectation")
+    plt.axhline(color='black',linewidth=5)
+    plt.axvline(color='black',linewidth=5)
+    plt.plot(np.linspace(xmin,xmax,100)/Npfixsb, -1*np.linspace(xmin,xmax,100)/Npfixsb,linestyle='--',color='black',linewidth=4,label="Additive expectation")
     plt.fill_between(critical_xs/Npfixsb, critical_ys/Npfixsb,ymax/Npfixsb*np.ones_like(critical_ys),color='honeydew',zorder=0)
     plt.fill_between([critical_xs[-1]/Npfixsb,xmax/Npfixsb], [ymin/Npfixsb,ymin/Npfixsb],[ymax/Npfixsb,ymax/Npfixsb],color='honeydew',zorder=0)
     plt.fill_between(critical_xs/Npfixsb,ymin/Npfixsb*np.ones_like(critical_ys),critical_ys/Npfixsb,color='aliceblue',zorder=0)
@@ -334,12 +334,10 @@ def run():
     #plt.legend(frameon=False,prop={'size': 40})
     plt.gca().set_xlim([xmin/Npfixsb,xmax/Npfixsb])
     plt.gca().set_ylim([ymin/Npfixsb,ymax/Npfixsb])
-    plt.xscale('log')
-    plt.yscale('log')
-    
+
     plt.tight_layout();
-    plt.savefig("figures/figure_3c.png",bbox_inches='tight',dpi=700)
-    #plt.show()
-    
+    #plt.savefig("figures/figure_3c.png",bbox_inches='tight',dpi=700)
+    plt.show()
+
 if __name__=='__main__':
     run()

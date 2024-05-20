@@ -11,21 +11,21 @@ from scipy.special import factorial
 def calculate_logNpfix_beneficial(s,xc,v,sb,Ub):
 
     #value = (v/s/sb)*(np.exp(xc**2/(2*v)-(xc-s)**2/(2*v)) - np.exp(-(s)**2/(2*v)) + np.exp(xc**2/(2*v))*(np.sqrt(np.pi/(2*v)))*(s**2/xc)*2*gaussian_cdf((s-xc)/np.sqrt(v)))
-
+    
     # Same version but factored out some of the big stuff
-
+    
     value_without_xcsv = (v/s/sb)*(np.exp(-s*s/2/v)*(-1*np.expm1(-xc*s/v)) + np.exp(xc**2/(2*v)-xc*s/v)*(np.sqrt(np.pi/(2*v)))*(s**2/xc)*2*gaussian_cdf((s-xc)/np.sqrt(v)))
     if value_without_xcsv<0:
         print("Bad value:", s,xc,v,sb,Ub,value_without_xcsv)
-
+    
     #return np.log(value)
     return xc*s/v+np.log(value_without_xcsv)
-
+    
 def constrain_xc_exact(xc,v,s,Ub):
     return calculate_logNpfix_beneficial(s,xc,v,s,Ub)+np.log(s*Ub/v)
     # previous version for records
     #return np.log((Ub/s)*(np.exp(xc**2/(2*v))*np.exp(-(xc-s)**2/(2*v)) - np.exp(-(s)**2/(2*v)) + np.exp(xc**2/(2*v))*(np.sqrt(np.pi/(2*v)))*(s**2/xc)*(1+erf((s-xc)/np.sqrt(2*v))))) #correct#    
-
+    
 # previous version for solving for xc 
 # (I've now defined a new one below that doesn't require N or xc_pop)
 def fsolve_eq_xc_exact(N,s,Ub,v,xc_pop,r):
@@ -49,12 +49,46 @@ def calculate_xc_twoparam(v,sb,Ub):
     #print(guess_xc_mm,guess_xc_qs)
     # Take larger of the two
     guess_xc = max([guess_xc_mm,guess_xc_qs])
-
+    
     # Solve for xc numerically using starting guess
     condition = lambda x: constrain_xc_exact(x,v,sb,Ub)
     xc=fsolve(condition,guess_xc)[0]
     return xc
 
+# new version (same thing, slightly different initial guesses, doesn't require N or xc_pop)
+def calculate_both_twoparam(N,sb,Ub):
+
+    # Initial guesses for xc:
+    v=2*sb**2*np.log(N*sb)/np.log(sb/Ub)**2
+    # First one from MM regime
+    guess_xc_mm = v/sb*np.log(sb/Ub)+sb/2
+    # Second one from QS regime
+    guess_xc_qs = np.sqrt(2*v*np.log(v/Ub/sb))
+    #print(guess_xc_mm,guess_xc_qs)
+    # Take larger of the two
+    guess_xc = max([guess_xc_mm,guess_xc_qs])
+    
+    # Solve for xc numerically using starting guess
+    v,xc=fsolve_both(sb,Ub,N,v,guess_xc)
+    return v,xc
+
+#use both constraints to constrain both
+def equations_both(p,s,Ub,N):
+    v,xc=p
+    return [constrain_xc_exact(xc,v,s,Ub),constrain_v(xc,v,N,s)]
+
+#solve for xc and v for general population
+def fsolve_both(s,Ub,N,guess_v,guess_xc):
+    root=fsolve(equations_both,[guess_v,guess_xc],args=(s,Ub,N))
+    return root
+
+#v constrain equation
+def constrain_v(xc,v,N,s):
+    return xc**2/(2*v) - np.log((2*N*xc*(s))/(2*np.pi*v)**0.5)
+
+def constrain_xc_exact(xc,v,s,Ub):
+    return np.log(1)-np.log((Ub/(s))*(np.exp(xc**2/(2*v))*np.exp(-(xc-s)**2/(2*v))*((xc+s)/xc) - np.exp(-(s)**2/(2*v)) + np.exp(xc**2/(2*v))*(np.sqrt(np.pi/(2*v)))*(s**2/xc)*(1+erf((s-xc)/np.sqrt(2*v))))) #correct#
+    
 # if you know XCM, calculate the fold change in Ub...
 def calculate_Ub_from_xc(v,sb,xc):
 
@@ -62,11 +96,11 @@ def calculate_Ub_from_xc(v,sb,xc):
         logUb_guess = -xc*sb/v+sb**2/2/v + np.log(sb)
     else: # initial guess from QS regime
         logUb_guess = np.log(v/sb**2)-xc**2/2/v + np.log(sb)
-
+        
     condition = lambda y: constrain_xc_exact(xc,v,sb,np.exp(y))
     logUb=fsolve(condition,[logUb_guess])[0]
     return np.exp(logUb)
-
+    
 #theoretical predictions for Npfix
 def Npfix_small_r(s,r,Ub,N,v):
     q=2*np.log(N*s)/(np.log(s/Ub))
@@ -83,26 +117,144 @@ def Npfix_large_r(s,r,Ub,N,v):
     Npfix=2*N*Ub*r*s*xcm/v
     return Npfix
 
-# new version (switches between MM and QS internally, rather than externally)
-def calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=True):
-
+# new version (switches between MM and QS internally, rather than externally)--adjusted for when simulation v unavailable
+def calculate_Npfix_twoparam_v_unknown(N,sb,Ub,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=True):
+    
     # Standardize how we treat dead end modifiers
     if Um==0 or sm==0:
         # This is a dead end modifier
         # set Um=0 and sm=sb (convention)
         Um=0
         sm=sb
-
+        
     # First make sure we have xc and xcm
     if xc<-0.5:
         # Need to calculate xc from scratch. 
-        xc = calculate_xc_twoparam(v,sb,Ub)
-
+        v,xc = calculate_both_twoparam(N,sb,Ub)
+    
     if xcm<-0.5:
         # Need to calculate xcm from scratch
         # maximum possible xcm (from dead-end modifier section)
         xcm_max = np.sqrt(2)*xc*(1-(v/(2*xc**2))*np.log(xc*sb/v*xc**2/v))
+        
+        if Um>0:
+            xcm = calculate_xc_twoparam(v,sm,Um)
+            #print("this is xcm ",xcm,xc)
+            #print(sm/sb, xcm, xcm_max)
+            if correct_xcm and xcm>xcm_max:
+            #    #print("Switching xcm!", sm/sb, Um/Ub)
+                # Pretend we're a dead end modifier
+                xcm=xcm_max
+                Um=0
+                sm=sb
+        else:
+        	# We are a dead end modifier
+            xcm = xcm_max
+    if np.abs(xcm-xc)<.00001:
+        xcm=xc
+    
+    # Next gate on whether we are in the MM, QS, (or DE) regimes 
+    if Um==0:
+        # use dead end solution 
+        
+        if xc+deltam>xcm:
+            Npfix=(v/(xc*sb))*(np.exp((xc**2-(xcm-deltam)**2)/(2*v))-1) +2*N*deltam*(gaussian_cdf((deltam-xcm)/np.sqrt(v))-gaussian_cdf(-xc/np.sqrt(v)))
+        else:
+            Npfix=0 
+        
+    elif xcm>sm:
+        # use MM solution
+        
+        base_Npfix = (xcm/xc)*(sm/sb)*np.exp((xc**2-xcm**2)/(2*v))
+        
+        # Next gate on direct cost or benefit
+        if deltam == 0: # No cost or benefit
+            Npfix = base_Npfix
+        
+        elif deltam<0: # Direct cost
+        
+            # define positive version of cost (for convenience)
+            abs_deltam = np.abs(deltam)
+            # switch variables to k and Delta
+            k=np.floor(abs_deltam/sm)
+            D=abs_deltam-k*sm
+            
+            Npfix = base_Npfix*np.exp(-(xcm-sm/2)*abs_deltam/v+D*(sm-D)/(2*v)-gammaln(k+1)+k*np.log(1-sm/xcm))*((1-np.exp(-D*np.minimum(sm,sm-D+xc-xcm)/v))/(sm*D/v)*(1-np.exp(-sm*(sm-D)/v))+((xcm-sm)/xcm)/(k+1)*((1-np.exp(-sm*(sm-D)/v))/(sm*(sm-D)/v))*(1-np.exp(-D*sm/v)))
+        else: # Direct benefit
+            
+            if xc+deltam > xcm:
+                Npfix = base_Npfix*(np.exp(xcm*deltam/v-deltam**2/(2*v))*(1-np.exp(-sm*deltam/v))/(sm*deltam/v))+2*N*deltam*gaussian_cdf((deltam-xcm)/np.sqrt(v))
+                
+            else:
+                # switch variables to k and Delta
+                k=np.floor((xcm-xc-deltam)/sm)
+                
+                D=(xcm-xc-deltam)-k*sm
+                Npfix = base_Npfix * np.exp( xcm*deltam/v-deltam**2/2/v+k*np.log(1-sm/xcm)-k*(k-1)*sm**2/2/v-(k*sm+D)*deltam/v-k*sm*D/v-gammaln(k+1))*(1-np.exp(-(deltam+k*sm)*(sm-D)/v))/((deltam+k*sm)*sm/v)
+                
+                #if k>-0.5:
+                #   print("Using k>=0!", k, sm/sb,deltam/sb,Npfix)
+                
+            
+    else:
+        # use QS solution
+        base_Npfix=2*N*Um*sm*xcm/v # most simplified version
+        #Npfix=((xcm*xcm)/(xc*sb))*np.exp((xc**2-xcm**2)/(2*v)) # less simplified version
+        # is continuous, but not asymptotically correct at large sm/s
+    
+        # Next gate on direct cost or benefit
+        if deltam == 0:
+            Npfix = base_Npfix
+        elif deltam < 0:
+            # define positive version of cost (for convenience)
+            abs_deltam = np.abs(deltam)
+            # switch variables to k and Delta
+            k=np.floor(abs_deltam/sm)
+            D=abs_deltam-k*sm
+        
+            # We do numerical integration of the expression in the SI
+            first_term = lambda x: (Um/sm)**k*(1/factorial(k))*np.exp(-k*sm*D/v-D**2/(2*v)-x*D/v)*0.5*(erf((x+k*sm)/np.sqrt(2*v))+1)*(1/xcm)
+            
+            second_term = lambda x:  (Um/sm)**k*(v/(sm*xcm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*((x+(k+1)*sm)/sm)*gamma(-x/sm-k)/gamma(1-x/sm) 
+            
+            third_term = lambda x: (v/(sm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*(1/factorial(k))*(sm/(x+k*sm))*(1/xcm)*(Ub/sm)**k
+            
+            first_integrand = lambda x: first_term(x)+second_term(x)+third_term(x)
+            
+            second_integrand = lambda x: (Um/sm)**(k+1)*(np.exp(-k*sm*D/v-D**2/(2*v)+(2*k+1)*sm**2/(2*v)))*(1/factorial(k+1))*np.exp(x*(sm-D)/v)*0.5*(erf((x+(k+1)*sm)/np.sqrt(2*v))+1)*(1/xcm)
+            
+            first_integral = integrate.quad(first_integrand,xcm-(k+1)*sm,np.minimum(xcm-k*sm,xc-k*sm-D))[0]
+            
+            second_integral = integrate.quad(second_integrand,xcm-(k+2)*sm,xcm-(k+1)*sm)[0]
+            
+            Npfix = base_Npfix*(first_integral+second_integral)
+            
+        else:
+            print("Not suported yet!")
+            Npfix = -1
+            
+    return Npfix
 
+# new version (switches between MM and QS internally, rather than externally)
+def calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=True):
+    
+    # Standardize how we treat dead end modifiers
+    if Um==0 or sm==0:
+        # This is a dead end modifier
+        # set Um=0 and sm=sb (convention)
+        Um=0
+        sm=sb
+        
+    # First make sure we have xc and xcm
+    if xc<-0.5:
+        # Need to calculate xc from scratch. 
+        xc = calculate_xc_twoparam(v,sb,Ub)
+    
+    if xcm<-0.5:
+        # Need to calculate xcm from scratch
+        # maximum possible xcm (from dead-end modifier section)
+        xcm_max = np.sqrt(2)*xc*(1-(v/(2*xc**2))*np.log(xc*sb/v*xc**2/v))
+        
         if Um>0:
             xcm = calculate_xc_twoparam(v,sm,Um)
             #print(sm/sb, xcm, xcm_max)
@@ -115,57 +267,57 @@ def calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=T
         else:
         	# We are a dead end modifier
             xcm = xcm_max
-
+    
     # Next gate on whether we are in the MM, QS, (or DE) regimes 
     if Um==0:
         # use dead end solution 
-
+        
         if xc+deltam>xcm:
             Npfix=(v/(xc*sb))*(np.exp((xc**2-(xcm-deltam)**2)/(2*v))-1) +2*N*deltam*(gaussian_cdf((deltam-xcm)/np.sqrt(v))-gaussian_cdf(-xc/np.sqrt(v)))
         else:
             Npfix=0 
-
+        
     elif xcm>sm:
         # use MM solution
-
+        
         base_Npfix = (xcm/xc)*(sm/sb)*np.exp((xc**2-xcm**2)/(2*v))
-
+        
         # Next gate on direct cost or benefit
         if deltam == 0: # No cost or benefit
             Npfix = base_Npfix
-
+        
         elif deltam<0: # Direct cost
-
+        
             # define positive version of cost (for convenience)
             abs_deltam = np.abs(deltam)
             # switch variables to k and Delta
             k=np.floor(abs_deltam/sm)
             D=abs_deltam-k*sm
-
+            
             Npfix = base_Npfix*np.exp(-(xcm-sm/2)*abs_deltam/v+D*(sm-D)/(2*v)-gammaln(k+1)+k*np.log(1-sm/xcm))*((1-np.exp(-D*np.minimum(sm,sm-D+xc-xcm)/v))/(sm*D/v)*(1-np.exp(-sm*(sm-D)/v))+((xcm-sm)/xcm)/(k+1)*((1-np.exp(-sm*(sm-D)/v))/(sm*(sm-D)/v))*(1-np.exp(-D*sm/v)))
-
+        
         else: # Direct benefit
-
+            
             if xc+deltam > xcm:
                 Npfix = base_Npfix*(np.exp(xcm*deltam/v-deltam**2/(2*v))*(1-np.exp(-sm*deltam/v))/(sm*deltam/v))+2*N*deltam*gaussian_cdf((deltam-xcm)/np.sqrt(v))
-
+                
             else:
                 # switch variables to k and Delta
                 k=np.floor((xcm-xc-deltam)/sm)
-
+                
                 D=(xcm-xc-deltam)-k*sm
                 Npfix = base_Npfix * np.exp( xcm*deltam/v-deltam**2/2/v+k*np.log(1-sm/xcm)-k*(k-1)*sm**2/2/v-(k*sm+D)*deltam/v-k*sm*D/v-gammaln(k+1))*(1-np.exp(-(deltam+k*sm)*(sm-D)/v))/((deltam+k*sm)*sm/v)
-
+                
                 #if k>-0.5:
                 #   print("Using k>=0!", k, sm/sb,deltam/sb,Npfix)
-
-
+                
+            
     else:
         # use QS solution
         base_Npfix=2*N*Um*sm*xcm/v # most simplified version
         #Npfix=((xcm*xcm)/(xc*sb))*np.exp((xc**2-xcm**2)/(2*v)) # less simplified version
         # is continuous, but not asymptotically correct at large sm/s
-
+    
         # Next gate on direct cost or benefit
         if deltam == 0:
             Npfix = base_Npfix
@@ -175,54 +327,54 @@ def calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=0,xc=-1,xcm=-1,correct_xcm=T
             # switch variables to k and Delta
             k=np.floor(abs_deltam/sm)
             D=abs_deltam-k*sm
-
+        
             # We do numerical integration of the expression in the SI
             first_term = lambda x: (Um/sm)**k*(1/factorial(k))*np.exp(-k*sm*D/v-D**2/(2*v)-x*D/v)*0.5*(erf((x+k*sm)/np.sqrt(2*v))+1)*(1/xcm)
-
+            
             second_term = lambda x:  (Um/sm)**k*(v/(sm*xcm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*((x+(k+1)*sm)/sm)*gamma(-x/sm-k)/gamma(1-x/sm) 
-
+            
             third_term = lambda x: (v/(sm*np.sqrt(2*np.pi*v)))*np.exp(-(x-deltam)**2/(2*v))*(1/factorial(k))*(sm/(x+k*sm))*(1/xcm)*(Ub/sm)**k
-
+            
             first_integrand = lambda x: first_term(x)+second_term(x)+third_term(x)
-
+            
             second_integrand = lambda x: (Um/sm)**(k+1)*(np.exp(-k*sm*D/v-D**2/(2*v)+(2*k+1)*sm**2/(2*v)))*(1/factorial(k+1))*np.exp(x*(sm-D)/v)*0.5*(erf((x+(k+1)*sm)/np.sqrt(2*v))+1)*(1/xcm)
-
+            
             first_integral = integrate.quad(first_integrand,xcm-(k+1)*sm,np.minimum(xcm-k*sm,xc-k*sm-D))[0]
-
+            
             second_integral = integrate.quad(second_integrand,xcm-(k+2)*sm,xcm-(k+1)*sm)[0]
-
+            
             Npfix = base_Npfix*(first_integral+second_integral)
-
+            
         else:
             print("Not suported yet!")
             Npfix = -1
-
+            
     return Npfix
 
 # Calculates the critical cost or benefit necessary to make modifier neutral
 def calculate_critical_cost_twoparam(N,sb,Ub,v,sm,Um):
 
     # First try to calculate a guess.
-
+    
     # Calculate base Npfix:
     base_Npfix = calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um)
-
+    
     xc = calculate_xc_twoparam(v,sb,Ub)
-
+    
     xcm_max = np.sqrt(2)*xc*(1-(v/(2*xc**2))*np.log(xc*sb/v*xc**2/v))
-
+    
     if Um>0:
     	xcm = calculate_xc_twoparam(v,sm,Um)
     else:
     	xcm=xcm_max
-
+    
     if xcm>xcm_max:
         print("Switching xcm!", sm/sb, Um/Ub)
         xcm=xcm_max
         #Um=0
         #sm=sb
-
-
+    
+    
     print("base npfix", base_Npfix)
     if base_Npfix < 1: # It's a costly modifier, so looking for a fitness benefit
         if base_Npfix==0:
@@ -236,15 +388,15 @@ def calculate_critical_cost_twoparam(N,sb,Ub,v,sm,Um):
             deltam_guess = -v/xcm*np.log(base_Npfix)
     else: # It's exactly neutral
         deltam_guess = 0
-
+        
     # Then calculate it numerically
     calculate_logNpfix = lambda x: np.log(calculate_Npfix_twoparam(N,sb,Ub,v,sm,Um,deltam=x)+1e-09)
-
+    
     deltam_critical = fsolve(calculate_logNpfix,deltam_guess)[0]
-
+    
     #print("Rootfinding result:", deltam_guess, deltam_critical, sm/sb)
     #print("Err:", deltam_guess, calculate_logNpfix(deltam_critical))
-
+    
     return deltam_critical
 
 #Npfix for joint sb and Ub modifier
@@ -265,7 +417,7 @@ def Npfix_mutation_rate(s,rs,Ub,N,v):
         q_it=2*np.log(N*s)/(np.log(s/Ub))
         xc=fsolve_eq_xc_exact(N,s,Ub,v,q_it*s,1)
         xcm=fsolve_eq_xc_exact(N,s,r*Ub,v,q_it*s,1)
-
+        
         Npfix1=(xcm*s)/(xc*s)*np.exp((xc**2-xcm**2)/(2*v))
         Npfix2=2*N*r*Ub*s*xcm/v
         Npfix=np.minimum(Npfix1,Npfix2)
@@ -345,7 +497,7 @@ def Npfix_del(s,r,Ub,N,sds,v):
             Npfix=Npfix_nm*(val[0]+val_e[0])
             out.append(Npfix)
     return np.asarray(out)
-
+    
 # Previous theoretical prediction for deleterious modifier with direct benefit   
 def Npfix_ben(s,r,Ub,N,sds,v):
     out=[]
@@ -362,7 +514,7 @@ def Npfix_ben(s,r,Ub,N,sds,v):
     for sd in sds:
         #evolutionary dead-end
         if r==0:
-
+            
             e=v/xc*np.log(xc*s/v*xc**2/v)
             xcm=np.sqrt(2)*xc*(1-(v/(2*xc**2))*np.log(xc*s/v*xc**2/v))
             if xc-sd>xcm:
@@ -381,7 +533,7 @@ def Npfix_ben(s,r,Ub,N,sds,v):
             out.append(Npfix)
     return np.asarray(out)
 
-
+    
 ########
 #
 # Continuous DFEs
@@ -474,38 +626,36 @@ def constrain_xc_exact_p_alt(xcm,xc,v,s,Ub,sm,Ubm,N):
     print(a,b,xc,xcm)
     return np.log(b/a)-np.log(xc-xcm)
 
-
-
 def calculate_seff_Ueff_beta(v,xc,s0,U0,b):
 
     # Working out the average
     #y = x^beta --> x = y^(1/beta)
     #dy = beta*x^(beta-1) dx = beta*y^((beta-1)/beta) dx
     #dx = 1/beta*y^(-1+1/beta)
-
+    
     #norm = integral 1/beta/Gamma(1+1/beta) * y^(1/beta-1)*exp(-y) = 1/beta Gamma(1/beta) / Gamma(1+1/beta) = 1
-
+    
     #savg = integral 1/beta*1/Gamma(1+1/\beta) * y^(2/beta-2) * exp(-y) = Gamma(2/beta)/beta Gamma(1+1/beta) = Gamma(2/beta)/Gamma(1/beta) 
-
+    
     savg = s0*gamma(2.0/b)/gamma(1.0/b)
-
+    
     if savg > xc:
         return savg, U0
-
+    
     if b==1:
         sstar = xc-v/s0
     else:    
         sstar_condition = lambda x: x-xc+v*(b/s0)*np.power((x/s0),b-1)
-
+    
         sstar_guess = ((xc*(s0**b)/(b*v))**(1/(b-1)))*(1-1/(1+b*(b-1)*(v/s0**2)*(xc/(b*v))**((b-2)/(b-1))))
 
         sstar = fsolve(sstar_condition, [sstar_guess])[0]
-
+    
     delta = ((1/v)+((b-1)*b*((sstar/s0)**(b))/(sstar**2)))**(-1/2)
     Ustar = U0*np.sqrt(2*np.pi)*delta/s0/gamma(1+1.0/b)*np.exp(-np.power(sstar/s0,b))
-
+    
     #print(delta,np.sqrt(v)) # these are the same
-
+    
     if sstar < xc:
         # Still in MM regime, return sstar, Ustar
         return sstar, Ustar
@@ -513,34 +663,34 @@ def calculate_seff_Ueff_beta(v,xc,s0,U0,b):
         # actually in QS regime, return savg, U0
         # print("Shouldn't be here yet", xc,sstar,savg)
         return savg, U0
-
+        
 def calculate_xc_seff_Ueff_beta(v,s0,U0,b):
-
+    
     # Construct initial guess of xc
     if b==1:
         guess_xc = np.sqrt(2*v*np.log(s0/U0))
     else:
         guess_xc = v/s0*np.log(np.sqrt(b)*s0/U0)
-
+    
     # Helper function that takes the output of calculate_seff_Ueff
     constrain_xc_tuple = lambda x,y: constrain_xc_exact(x,v,y[0],y[1])
     # xc constraint using the corresponding values of seff,Ueff
     constrain_xc_beta = lambda x: constrain_xc_tuple(x,calculate_seff_Ueff_beta(v,x,s0,U0,b)) 
-
+    
     # Solve for xc
     xc=fsolve(constrain_xc_beta,guess_xc)[0]
     # Calculate the associated values of seff,Ueff
     seff,Ueff = calculate_seff_Ueff_beta(v,xc,s0,U0,b)
-
+    
     return xc,seff,Ueff
 
 def calculate_seff_Ueff_beta_plus_delta(v,xc,s0,U0,b,s1,U1):
-
+    
     sstar,Ustar = calculate_seff_Ueff_beta(v,xc,s0,U0,b)
-
+    
     log_W0 = calculate_logNpfix_beneficial(sstar,xc,v,sstar,Ustar)+np.log(Ustar)
     log_W1 = calculate_logNpfix_beneficial(s1,xc,v,sstar,Ustar)+np.log(U1)
-
+    
     if log_W1 > log_W0:
         #print("Returning dmu!")
         return s1,U1
@@ -549,29 +699,29 @@ def calculate_seff_Ueff_beta_plus_delta(v,xc,s0,U0,b,s1,U1):
         return sstar,Ustar
 
 def calculate_xc_seff_Ueff_beta_plus_delta(v,s0,U0,b,s1,U1):
-
+    
     # Construct initial guess of xc
     if b==1:
         guess_xc = np.sqrt(2*v*np.log(s0/U0))
     else:
         guess_xc = v/s0*np.log(np.sqrt(b)*s0/U0)
-
+    
     seff,Ueff = calculate_seff_Ueff_beta_plus_delta(v,guess_xc,s0,U0,b,s1,U1)
-
+    
     new_guess_xc = calculate_xc_twoparam(v,seff,Ueff)
     #print("Guess:", guess_xc, new_guess_xc, seff, Ueff)
     guess_xc = new_guess_xc
-
+    
     # Helper function that takes the output of calculate_seff_Ueff
     constrain_xc_tuple = lambda x,y: constrain_xc_exact(x,v,y[0],y[1])
     # xc constraint using the corresponding values of seff,Ueff
     constrain_xc_beta_plus_delta = lambda x: constrain_xc_tuple(x,calculate_seff_Ueff_beta_plus_delta(v,x,s0,U0,b,s1,U1)) 
-
+    
     # Solve for xc
     xc=fsolve(constrain_xc_beta_plus_delta,guess_xc)[0]
     # Calculate the associated values of seff,Ueff
     seff,Ueff = calculate_seff_Ueff_beta_plus_delta(v,xc,s0,U0,b,s1,U1)
-
+       
     return xc,seff,Ueff
 
 # Calculate's dxc in the perturbative regime    
@@ -579,7 +729,7 @@ def calculate_I_delta(xc,v,sb,Ub,s1,U1):
 
     # Define a unitless version of dxc
     # y = dxc*sb/v 
-
+    
     # Define condition that dxc must satisfy (from perturbative regime in paper)
     # (tried expm1(y) instead of y.. doens't work as well...)
     # dxc_condition = lambda y: y+np.exp(y*s1/sb+xc*s1/v-s1**2/2/v - y - xc*sb/v + sb**2/2/v - np.log(Ub/sb) + np.log(U1/s1))
@@ -589,18 +739,18 @@ def calculate_I_delta(xc,v,sb,Ub,s1,U1):
     # The lowest deltaxc can be is -xc
     # so check to see if a solution is even possible
     ymin = -xc*sb/v
-
+     
     #if dxc_condition(ymin) > 0:
     #    return -1*ymin
-
+    
     # Recalculate using slightly more sensitive version...
     # (doesn't do anything...)
-
+    
     guess_y = -1*np.exp(calculate_logNpfix_beneficial(s1,xc,v,sb,Ub)-calculate_logNpfix_beneficial(sb,xc,v,sb,Ub)+np.log(U1)-np.log(Ub))
-
+    
     # if solution is possible, find it numerically
     y = fsolve(dxc_condition, guess_y)[0]
-
+    
     if y<ymin:
         I = -1*ymin
     elif guess_y < ymin:
@@ -610,22 +760,22 @@ def calculate_I_delta(xc,v,sb,Ub,s1,U1):
         I = 1e09
     else:
         I = -1*y
-
+        
     return I
-
+    
 # new version (switches between MM and QS internally, rather than externally)
 def calculate_Npfix_beta_plus_delta(N,s0,U0,beta,s1,U1,v,deltam=0,perturbative_transition=1.0):
-
+    
     # Need to calculate xc from scratch. 
     xc,seff,Ueff = calculate_xc_seff_Ueff_beta(v,s0,U0,beta)
-
+    
     I = calculate_I_delta(xc,v,seff,Ueff,s1,U1)
     #print("I =", I)
-
+    
     perturbative_xcm = xc-np.clip(I,-perturbative_transition,perturbative_transition)*v/seff
     perturbative_smeff = seff
     perturbative_Umeff = calculate_Ub_from_xc(v,perturbative_smeff,perturbative_xcm)
-
+    
     if I<perturbative_transition:
         # We are in the perturbative regime
         xcm=perturbative_xcm
@@ -633,33 +783,33 @@ def calculate_Npfix_beta_plus_delta(N,s0,U0,beta,s1,U1,v,deltam=0,perturbative_t
         Umeff=perturbative_Umeff
     else:
         # We are in the modifier dominated regime (or the crossover region)
-
+        
         # Need to recalculate xcm, smeff, Umeff:
         xcm,smeff,Umeff = calculate_xc_seff_Ueff_beta_plus_delta(v,s0,U0,beta,s1,U1)
-
+        
         # Check if we're in the crossover region
         # (if we are, pretend we are in the perturbative regime...)
         base_Npfix = calculate_Npfix_twoparam(N,seff,Ueff,v,smeff,Umeff,xc=xc,xcm=xcm,deltam=0)
-
+        
         perturbative_base_Npfix = calculate_Npfix_twoparam(N, seff, Ueff, v, perturbative_smeff, perturbative_Umeff, xc=xc, xcm=perturbative_xcm, deltam=0)
-
+        
         if np.fabs(np.log(base_Npfix)) < np.log(perturbative_base_Npfix):
             # secretly in the perturbative regime!
             xcm = perturbative_xcm
             smeff = perturbative_smeff
             Umeff = perturbative_Umeff
-
+    
     #print("Calculating for:",seff,Ueff,smeff,Umeff,deltam,xc,xcm)        
     Npfix = calculate_Npfix_twoparam(N,seff,Ueff,v,smeff,Umeff,xc=xc,xcm=xcm,deltam=deltam) 
-
+    
     return Npfix
 
 # Switching from one beta distribution to another...    
 def calculate_Npfix_beta(N,s0,U0,beta0,s1,U1,beta1,v,deltam=0):
-
+    
     # Need to calculate xc from scratch. 
     xc,seff,Ueff = calculate_xc_seff_Ueff_beta(v,s0,U0,beta0)
-
+    
     # Need to calculate xcm from scratch.
     if U1==0: # dead end
     	xcm=0
@@ -667,8 +817,11 @@ def calculate_Npfix_beta(N,s0,U0,beta0,s1,U1,beta1,v,deltam=0):
     	Umeff=0
     else:
     	xcm,smeff,Umeff = calculate_xc_seff_Ueff_beta(v,s1,U1,beta1)
-
+    
     Npfix = calculate_Npfix_twoparam(N,seff,Ueff,v,smeff,Umeff,deltam=deltam) 
-
+    
     return Npfix
 
+
+    
+    
